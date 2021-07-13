@@ -251,3 +251,103 @@ pub fn get_pretty_size(bytes: i64) -> String {
 
     return format!("{:.3} PiB", bytes / ONE_PI_B);
 }
+#[cfg(test)]
+mod tests {
+
+    use parquet::column::writer::ColumnWriter;
+    use parquet::data_type::ByteArray;
+    use std::convert::TryInto;
+    use parquet::schema::parser::parse_message_type;
+    use std::path::Path;
+    use std::sync::Arc;
+    use parquet::file::properties::WriterProperties;
+    use std::fs;
+    use parquet::file::writer::{SerializedFileWriter, FileWriter};
+
+    #[test]
+    fn it_writes_data() {
+        let path = Path::new("sample.parquet");
+
+        let message_type = "
+  message ItHangs {
+    REQUIRED INT64 DIM0;
+    REQUIRED DOUBLE DIM1;
+    REQUIRED BYTE_ARRAY DIM2;
+    REQUIRED BOOLEAN DIM3;
+  }
+";
+        let schema = Arc::new(parse_message_type(message_type).unwrap());
+        let props = Arc::new(WriterProperties::builder().build());
+        let file =
+            fs::File::create(&path).unwrap();
+        let mut writer = SerializedFileWriter::new(file, schema, props).unwrap();
+        for _group in 0..1 {
+            let mut row_group_writer = writer.next_row_group().unwrap();
+            let values: Vec<i64> = vec![0; 2049];
+            let my_values: Vec<i64> = values
+                .iter()
+                .enumerate()
+                .map(|(count, _x)| count.try_into().unwrap())
+                .collect();
+            let my_double_values: Vec<f64> = values
+                .iter()
+                .enumerate()
+                .map(|(count, _x)| count as f64)
+                .collect();
+            let my_bool_values: Vec<bool> = values
+                .iter()
+                .enumerate()
+                .map(|(count, _x)| count % 2 == 0)
+                .collect();
+            let my_ba_values: Vec<ByteArray> = values
+                .iter()
+                .enumerate()
+                .map(|(count, _x)| {
+                    let s = format!("{}", count);
+                    ByteArray::from(s.as_ref())
+                })
+                .collect();
+            while let Some(mut col_writer) = row_group_writer.next_column().expect("next column") {
+                match col_writer {
+                    // ... write values to a column writer
+                    // You can also use `get_typed_column_writer` method to extract typed writer.
+                    ColumnWriter::Int64ColumnWriter(ref mut typed_writer) => {
+                        typed_writer
+                            .write_batch(&my_values, None, None)
+                            .expect("writing int column");
+                    }
+                    ColumnWriter::DoubleColumnWriter(ref mut typed_writer) => {
+                        typed_writer
+                            .write_batch(&my_double_values, None, None)
+                            .expect("writing double column");
+                    }
+                    ColumnWriter::BoolColumnWriter(ref mut typed_writer) => {
+                        typed_writer
+                            .write_batch(&my_bool_values, None, None)
+                            .expect("writing bool column");
+                    }
+                    ColumnWriter::ByteArrayColumnWriter(ref mut typed_writer) => {
+                        typed_writer
+                            .write_batch(&my_ba_values, None, None)
+                            .expect("writing bytes column");
+                    }
+                    _ => {
+                        println!("huh:!");
+                    }
+                }
+                row_group_writer
+                    .close_column(col_writer)
+                    .expect("close column");
+            }
+            let rg_md = row_group_writer.close().expect("close row group");
+            println!("total rows written: {}", rg_md.num_rows());
+            writer
+                .close_row_group(row_group_writer)
+                .expect("close row groups");
+        }
+        writer.close().expect("close writer");
+
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(&bytes[0..4], &[b'P', b'A', b'R', b'1']);
+    }
+}
