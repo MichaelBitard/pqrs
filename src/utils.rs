@@ -53,7 +53,10 @@ pub fn print_rows(
     // print either all records, or the requested number of records
     while all_records || start < end {
         match iter.next() {
-            Some(row) => print_row(&row, json),
+            Some(row) => {
+                println!("CurrentRow {} {}", start, end);
+                print_row(&row, json);
+            }
             None => break,
         }
         start += 1;
@@ -144,7 +147,7 @@ pub fn get_row_batches(input: &str) -> Result<ParquetData, PQRSError> {
 
     let mut rows = 0;
     for maybe_batch in record_batch_reader {
-        let record_batch = maybe_batch?;
+        let record_batch = maybe_batch.unwrap();
         rows += record_batch.num_rows();
 
         batches.push(record_batch);
